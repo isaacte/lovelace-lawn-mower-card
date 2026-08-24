@@ -18,6 +18,14 @@ function mower(supportedFeatures?: unknown): HassEntity {
   };
 }
 
+test("feature constants match Home Assistant's lawn mower bit assignments", () => {
+  assert.deepEqual(LawnMowerFeature, {
+    START_MOWING: 1,
+    PAUSE: 2,
+    DOCK: 4,
+  });
+});
+
 test("standard mower actions follow Home Assistant supported_features", () => {
   const startOnly = mower(LawnMowerFeature.START_MOWING);
 
