@@ -1,5 +1,15 @@
-import { LitElement, css, html, nothing } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+
+import "./lawn-mower-card-editor";
+
+import {
+  getStubConfig,
+  type HassEntity,
+  type HomeAssistant,
+  type LawnMowerActionConfig,
+  type LawnMowerCardConfig,
+} from "./card-config";
 
 import {
   cameraBlockReason,
@@ -19,7 +29,6 @@ import {
   prioritizedHeaderSummary,
   resolvedControlEntities,
   resolvedCoverageEntityIds,
-  resolvedMowerLiveVideoEntity,
   resolvedMowerCompanionEntity,
   resolvedOwnedMowerCompanionEntity,
 } from "./card-logic";
@@ -29,32 +38,22 @@ import {
   timeInputValue,
   timeServiceValue,
 } from "./device-settings-controls";
-import {
-  deviceSettingsPanelStyles,
-  renderDeviceSettingsPanel,
-} from "./device-settings-panel";
-import {
-  heroLayoutStyles,
-  renderHeroLayout,
-  type HeroView,
-} from "./hero-layout";
+import { renderDeviceSettingsPanel } from "./device-settings-panel";
+import { renderHeroLayout, type HeroView } from "./hero-layout";
+import { availableHeroViews, resolveHeroView } from "./hero-views";
+import { lawnMowerCardStyles } from "./lawn-mower-card-styles";
 import {
   normalizeHeroImage,
   normalizeHeroImagePosition,
-  type HeroImagePosition,
 } from "./hero-image";
 import {
   mapPresentationClasses,
   normalizeMapFit,
   normalizeMapPosition,
-  type MapFit,
-  type MapPosition,
 } from "./map-presentation";
 import {
   createTranslator,
-  LOCALE_OPTIONS,
   resolveLocale,
-  type LocalePreference,
   type SupportedLocale,
   type TranslationKey,
 } from "./localization";
@@ -65,6 +64,10 @@ import {
   subscribeMowerMutations,
 } from "./mower-mutation-lock";
 import {
+  LawnMowerFeature,
+  mowerSupportsFeature,
+} from "./mower-capabilities";
+import {
   pointCloudActivationErrorIsCurrent,
   pointCloudPathFromEntity,
 } from "./point-cloud-logic";
@@ -74,10 +77,7 @@ import {
   discoverScheduleControls,
   type ScheduleControl,
 } from "./schedule-controls";
-import {
-  renderSchedulePanel,
-  schedulePanelStyles,
-} from "./schedule-panel";
+import { renderSchedulePanel } from "./schedule-panel";
 import {
   normalizedZoneSelection,
   reconciledZoneSelectionKeys,
@@ -140,80 +140,6 @@ function connectedCardSlot(element: Element): string | undefined {
 
   return segments.reverse().join("/");
 }
-
-type HassEntity = {
-  entity_id: string;
-  state: string;
-  attributes: Record<string, unknown>;
-  last_changed?: string;
-  last_updated?: string;
-};
-
-type HomeAssistant = {
-  language?: string;
-  locale?: { language?: string };
-  states: Record<string, HassEntity>;
-  entities?: Record<
-    string,
-    {
-      platform?: string;
-      device_id?: string;
-      name?: string;
-      translation_key?: string;
-    }
-  >;
-  services?: Record<string, Record<string, unknown>>;
-  callService(domain: string, service: string, data?: Record<string, unknown>): Promise<void>;
-  callWS<T>(message: Record<string, unknown>): Promise<T>;
-  hassUrl(path: string): string;
-};
-
-type LawnMowerTileConfig = {
-  entity: string;
-  label?: string;
-  icon?: string;
-};
-
-type LawnMowerActionConfig = {
-  type?: "start" | "pause" | "dock" | "more-info" | "service";
-  label?: string;
-  icon?: string;
-  entity?: string;
-  service?: string;
-  service_data?: Record<string, unknown>;
-};
-
-type LawnMowerCardConfig = {
-  type: string;
-  entity: string;
-  locale?: LocalePreference;
-  name?: string;
-  layout?: "default" | "compact" | "wide" | "hero";
-  hero_image?: string;
-  hero_image_position?: HeroImagePosition;
-  map_entity?: string;
-  map_fit?: MapFit;
-  map_position?: MapPosition;
-  camera_entity?: string;
-  show_map?: boolean;
-  show_point_cloud?: boolean;
-  status_entity?: string;
-  battery_entity?: string;
-  progress_entity?: string;
-  coverage_entity?: string;
-  coverage_total_entity?: string;
-  show_default_actions?: boolean;
-  show_helper_actions?: boolean;
-  show_advanced_details?: boolean;
-  control_entities?: string[];
-  summary_entities?: string[];
-  actions?: LawnMowerActionConfig[];
-  tiles?: LawnMowerTileConfig[];
-};
-
-type ConfigChangedDetail = {
-  config: LawnMowerCardConfig;
-};
 
 type RuntimeSessionDetails = {
   missionProgress?: string;
@@ -343,662 +269,10 @@ export class LawnMowerCard extends LitElement {
       : undefined;
   }
 
-  public static styles = [css`
-    :host {
-      display: block;
-    }
-
-    ha-card {
-      overflow: hidden;
-    }
-
-    .wrap {
-      display: grid;
-      gap: 16px;
-      padding: 16px;
-    }
-
-    .wrap.layout-compact {
-      gap: 12px;
-      padding: 12px;
-    }
-
-    .wrap.layout-wide {
-      grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.9fr);
-      align-items: start;
-    }
-
-    .main {
-      display: grid;
-      gap: 16px;
-      min-width: 0;
-    }
-
-    .side {
-      display: grid;
-      gap: 16px;
-      min-width: 0;
-    }
-
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: start;
-      gap: 12px;
-    }
-
-    .title-block {
-      min-width: 0;
-    }
-
-    .title {
-      font-size: 1.3rem;
-      font-weight: 600;
-      line-height: 1.2;
-    }
-
-    .subtitle {
-      color: var(--secondary-text-color);
-      margin-top: 4px;
-      word-break: break-word;
-    }
-
-    .header-summary {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 10px;
-    }
-
-    .summary-chip {
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 6px 10px;
-      font-size: 0.82rem;
-      background: color-mix(in srgb, var(--card-background-color) 94%, var(--primary-color) 6%);
-      white-space: nowrap;
-    }
-
-    .state-pill {
-      align-self: center;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 6px 10px;
-      font-size: 0.85rem;
-      white-space: nowrap;
-      background: color-mix(in srgb, var(--card-background-color) 92%, var(--primary-color) 8%);
-    }
-
-    .state-pill.state-mowing {
-      background: color-mix(in srgb, #173122 80%, var(--card-background-color) 20%);
-      border-color: color-mix(in srgb, #4ade80 45%, var(--divider-color) 55%);
-      color: #d8fbe6;
-    }
-
-    .state-pill.state-returning {
-      background: color-mix(in srgb, #2d2a15 82%, var(--card-background-color) 18%);
-      border-color: color-mix(in srgb, #facc15 45%, var(--divider-color) 55%);
-      color: #fff2bf;
-    }
-
-    .state-pill.state-paused {
-      background: color-mix(in srgb, #2a2235 82%, var(--card-background-color) 18%);
-      border-color: color-mix(in srgb, #c084fc 45%, var(--divider-color) 55%);
-      color: #f0ddff;
-    }
-
-    .state-pill.state-docked {
-      background: color-mix(in srgb, #182431 82%, var(--card-background-color) 18%);
-      border-color: color-mix(in srgb, #60a5fa 45%, var(--divider-color) 55%);
-      color: #d8ecff;
-    }
-
-    .state-pill.state-error {
-      background: color-mix(in srgb, #351b1b 82%, var(--card-background-color) 18%);
-      border-color: color-mix(in srgb, #f87171 45%, var(--divider-color) 55%);
-      color: #ffd9d9;
-    }
-
-    .map {
-      position: relative;
-      border: 1px solid var(--divider-color);
-      border-radius: 14px;
-      overflow: hidden;
-      background:
-        radial-gradient(circle at 20% 10%, color-mix(in srgb, var(--primary-color) 18%, transparent), transparent 45%),
-        color-mix(in srgb, var(--card-background-color) 84%, black 16%);
-      min-height: 180px;
-      display: grid;
-      place-items: center;
-      box-shadow: inset 0 1px 0 color-mix(in srgb, white 10%, transparent);
-    }
-
-    .map img {
-      display: block;
-      width: 100%;
-      max-height: min(62vh, 560px);
-      object-fit: contain;
-    }
-
-    .map img.map-fit-cover {
-      height: clamp(240px, 50vh, 560px);
-      object-fit: cover;
-    }
-
-    .map-position-top { object-position: center top; }
-    .map-position-bottom { object-position: center bottom; }
-    .map-position-left { object-position: left center; }
-    .map-position-right { object-position: right center; }
-    .map-position-top-left { object-position: left top; }
-    .map-position-top-right { object-position: right top; }
-    .map-position-bottom-left { object-position: left bottom; }
-    .map-position-bottom-right { object-position: right bottom; }
-
-    .map-status {
-      position: absolute;
-      inset: 12px 12px auto 12px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 7px;
-      pointer-events: none;
-      z-index: 3;
-    }
-
-    .map-badge {
-      padding: 5px 9px;
-      border: 1px solid color-mix(in srgb, white 24%, transparent);
-      border-radius: 999px;
-      color: white;
-      background: color-mix(in srgb, #101b17 76%, transparent);
-      backdrop-filter: blur(8px);
-      font-size: 0.75rem;
-      font-weight: 600;
-      box-shadow: 0 3px 12px rgb(0 0 0 / 18%);
-    }
-
-    .map-badge.live {
-      background: color-mix(in srgb, #0c6f44 82%, transparent);
-      border-color: color-mix(in srgb, #7cf1b4 55%, transparent);
-    }
-
-    .map-badge.warning {
-      background: color-mix(in srgb, #8a3a22 85%, transparent);
-      border-color: color-mix(in srgb, #ffb49c 55%, transparent);
-    }
-
-    .map-placeholder {
-      min-height: 180px;
-      display: grid;
-      place-items: center;
-      color: var(--secondary-text-color);
-      padding: 16px;
-      text-align: center;
-    }
-
-    .point-cloud-panel {
-      min-height: 320px;
-      overflow: hidden;
-      border: 1px solid var(--divider-color);
-      border-radius: 12px;
-      background: #080b09;
-    }
-
-    .layout-compact .point-cloud-panel {
-      min-height: 250px;
-    }
-
-    .point-cloud-placeholder {
-      min-height: inherit;
-      display: grid;
-      place-content: center;
-      justify-items: center;
-      gap: 12px;
-      padding: 24px;
-      color: rgba(247, 250, 247, 0.76);
-      text-align: center;
-    }
-
-    .point-cloud-placeholder ha-icon {
-      --mdc-icon-size: 36px;
-      color: #9fca8b;
-    }
-
-    .point-cloud-placeholder p {
-      margin: 0;
-    }
-
-    .selectors {
-      display: grid;
-      gap: 10px;
-    }
-
-    .preference-panel {
-      border: 1px solid color-mix(in srgb, var(--primary-color) 28%, var(--divider-color));
-      border-radius: 12px;
-      overflow: hidden;
-      background: color-mix(in srgb, var(--card-background-color) 96%, var(--primary-color) 4%);
-    }
-
-    .preference-panel summary {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 13px 14px;
-      cursor: pointer;
-      color: var(--primary-text-color);
-      font-weight: 700;
-      list-style: none;
-    }
-
-    .preference-panel summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .preference-panel summary::after {
-      content: "›";
-      color: var(--primary-color);
-      font-size: 1.35rem;
-      line-height: 1;
-      transform: rotate(90deg);
-      transition: transform 140ms ease;
-    }
-
-    .preference-panel[open] summary::after {
-      transform: rotate(-90deg);
-    }
-
-    .preference-summary {
-      display: grid;
-      gap: 2px;
-    }
-
-    .preference-summary small {
-      color: var(--secondary-text-color);
-      font-weight: 500;
-    }
-
-    .preference-controls {
-      padding: 0 12px 12px;
-    }
-
-    .selector-card {
-      display: grid;
-      gap: 6px;
-      padding: 12px;
-      border: 1px solid var(--divider-color);
-      border-radius: 10px;
-      background: color-mix(in srgb, var(--card-background-color) 94%, var(--primary-color) 6%);
-    }
-
-    .selector-label {
-      font-size: 0.8rem;
-      color: var(--secondary-text-color);
-      text-transform: uppercase;
-      letter-spacing: 0.02em;
-    }
-
-    .selector-card select {
-      width: 100%;
-      box-sizing: border-box;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 10px 12px;
-      background: var(--card-background-color);
-      color: var(--primary-text-color);
-      font: inherit;
-    }
-
-    .selector-number-header {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    .selector-number-value {
-      font-weight: 700;
-      color: var(--primary-text-color);
-      white-space: nowrap;
-    }
-
-    .selector-switch-body {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      color: var(--primary-text-color);
-      font-weight: 600;
-    }
-
-    .selector-card input[type="range"] {
-      width: 100%;
-      margin: 4px 0 0;
-      accent-color: var(--primary-color);
-    }
-
-    .zone-option-list {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
-      gap: 8px;
-    }
-
-    .zone-option {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      min-width: 0;
-      padding: 9px 10px;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      background: var(--card-background-color);
-      color: var(--primary-text-color);
-      cursor: pointer;
-    }
-
-    .zone-option.selected {
-      border-color: color-mix(in srgb, var(--primary-color) 62%, var(--divider-color));
-      background: color-mix(in srgb, var(--card-background-color) 88%, var(--primary-color) 12%);
-    }
-
-    .zone-option input {
-      flex: 0 0 auto;
-      margin: 0;
-      accent-color: var(--primary-color);
-    }
-
-    .zone-option span {
-      min-width: 0;
-      line-height: 1.25;
-      overflow-wrap: anywhere;
-    }
-
-    .zone-selection-note {
-      color: var(--secondary-text-color);
-      font-size: 0.78rem;
-      line-height: 1.35;
-    }
-
-    .target-panel {
-      display: grid;
-      gap: 12px;
-      padding: 14px;
-      border: 1px solid color-mix(in srgb, var(--primary-color) 22%, var(--divider-color) 78%);
-      border-radius: 12px;
-      background:
-        linear-gradient(
-          180deg,
-          color-mix(in srgb, var(--card-background-color) 93%, var(--primary-color) 7%),
-          color-mix(in srgb, var(--card-background-color) 98%, var(--primary-color) 2%)
-        );
-    }
-
-    .target-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .target-title {
-      font-size: 0.86rem;
-      font-weight: 700;
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
-    }
-
-    .target-badge {
-      border: 1px solid color-mix(in srgb, var(--primary-color) 28%, var(--divider-color) 72%);
-      border-radius: 999px;
-      padding: 4px 8px;
-      font-size: 0.76rem;
-      color: var(--secondary-text-color);
-      background: color-mix(in srgb, var(--card-background-color) 92%, var(--primary-color) 8%);
-      white-space: nowrap;
-    }
-
-    .target-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 10px;
-    }
-
-    .target-metric {
-      border: 1px solid var(--divider-color);
-      border-radius: 10px;
-      padding: 10px;
-      background: color-mix(in srgb, var(--card-background-color) 96%, var(--primary-color) 4%);
-      min-width: 0;
-    }
-
-    .target-metric-label {
-      color: var(--secondary-text-color);
-      font-size: 0.76rem;
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.02em;
-    }
-
-    .target-metric-value {
-      font-size: 0.98rem;
-      font-weight: 600;
-      line-height: 1.25;
-      word-break: break-word;
-    }
-
-    .target-note {
-      color: var(--secondary-text-color);
-      font-size: 0.84rem;
-      line-height: 1.4;
-    }
-
-    .session-panel {
-      display: grid;
-      gap: 12px;
-      padding: 14px;
-      border: 1px solid color-mix(in srgb, #4ade80 32%, var(--divider-color) 68%);
-      border-radius: 12px;
-      background:
-        linear-gradient(
-          180deg,
-          color-mix(in srgb, #153527 18%, var(--card-background-color) 82%),
-          color-mix(in srgb, var(--card-background-color) 95%, #153527 5%)
-        );
-    }
-
-    .session-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .session-title {
-      font-size: 0.86rem;
-      font-weight: 700;
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
-      color: color-mix(in srgb, var(--primary-text-color) 86%, #4ade80 14%);
-    }
-
-    .session-badge {
-      border: 1px solid color-mix(in srgb, #4ade80 34%, var(--divider-color) 66%);
-      border-radius: 999px;
-      padding: 4px 8px;
-      font-size: 0.76rem;
-      color: color-mix(in srgb, var(--primary-text-color) 78%, #4ade80 22%);
-      background: color-mix(in srgb, #153527 24%, var(--card-background-color) 76%);
-      white-space: nowrap;
-    }
-
-    .session-subtitle {
-      color: var(--secondary-text-color);
-      font-size: 0.85rem;
-      line-height: 1.4;
-    }
-
-    .session-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-      gap: 10px;
-    }
-
-    .session-metric {
-      border: 1px solid color-mix(in srgb, #4ade80 16%, var(--divider-color) 84%);
-      border-radius: 10px;
-      padding: 10px;
-      background: color-mix(in srgb, var(--card-background-color) 95%, #4ade80 5%);
-      min-width: 0;
-    }
-
-    .session-metric-label {
-      color: var(--secondary-text-color);
-      font-size: 0.76rem;
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.02em;
-    }
-
-    .session-metric-value {
-      font-size: 0.98rem;
-      font-weight: 600;
-      line-height: 1.25;
-      word-break: break-word;
-    }
-
-    .actions {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 10px;
-    }
-
-    .action-feedback {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      border: 1px solid color-mix(in srgb, var(--success-color, #67b55b) 42%, transparent);
-      border-radius: 10px;
-      padding: 9px 11px;
-      background: color-mix(in srgb, var(--success-color, #67b55b) 13%, transparent);
-      color: var(--primary-text-color);
-      font-size: 0.8rem;
-    }
-
-    .action-feedback.error {
-      border-color: color-mix(in srgb, var(--error-color, #db4437) 48%, transparent);
-      background: color-mix(in srgb, var(--error-color, #db4437) 13%, transparent);
-    }
-
-    .action-feedback ha-icon {
-      --mdc-icon-size: 18px;
-      flex: 0 0 auto;
-    }
-
-    .action-group {
-      display: grid;
-      gap: 10px;
-    }
-
-    .action-group-title {
-      color: var(--secondary-text-color);
-      font-size: 0.8rem;
-      letter-spacing: 0;
-      text-transform: uppercase;
-    }
-
-    button {
-      font: inherit;
-      padding: 12px;
-      border-radius: 8px;
-      border: 1px solid var(--divider-color);
-      color: var(--primary-text-color);
-      background: color-mix(in srgb, var(--card-background-color) 92%, var(--primary-color) 8%);
-      cursor: pointer;
-    }
-
-    button:hover {
-      background: color-mix(in srgb, var(--card-background-color) 82%, var(--primary-color) 18%);
-    }
-
-    button:disabled {
-      cursor: not-allowed;
-      opacity: 0.5;
-    }
-
-    .button-content {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      min-width: 0;
-    }
-
-    ha-icon {
-      --mdc-icon-size: 20px;
-      flex: 0 0 auto;
-    }
-
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 10px;
-    }
-
-    .wrap.layout-compact .stats {
-      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-      gap: 8px;
-    }
-
-    .tile {
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 12px;
-      min-width: 0;
-    }
-
-    .tile-label {
-      color: var(--secondary-text-color);
-      font-size: 0.8rem;
-      margin-bottom: 6px;
-    }
-
-    .tile-value {
-      font-size: 1rem;
-      font-weight: 600;
-      line-height: 1.2;
-      word-break: break-word;
-    }
-
-    .wrap.layout-compact .title {
-      font-size: 1.15rem;
-    }
-
-    .wrap.layout-compact button {
-      padding: 10px;
-    }
-
-    .wrap.layout-compact .tile {
-      padding: 10px;
-    }
-
-    @media (max-width: 480px) {
-      .actions {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    @media (max-width: 900px) {
-      .wrap.layout-wide {
-        grid-template-columns: 1fr;
-      }
-    }
-  `, schedulePanelStyles, deviceSettingsPanelStyles, heroLayoutStyles];
+  public static styles = lawnMowerCardStyles;
 
   public static getStubConfig(): LawnMowerCardConfig {
-    return {
-      type: "custom:lawn-mower-card",
-      entity: "lawn_mower.my_mower",
-    };
+    return getStubConfig();
   }
 
   public setConfig(config: LawnMowerCardConfig): void {
@@ -1131,7 +405,7 @@ export class LawnMowerCard extends LitElement {
     const showPointCloud =
       this._config.show_point_cloud ?? Boolean(pointCloudPath);
     const statTiles = this._buildTiles();
-    const actionGroups = this._buildActionGroups(mower.state);
+    const actionGroups = this._buildActionGroups(mower);
     const headerSummary = this._buildHeaderSummary();
     const scheduleControls = discoverScheduleControls(
       this.hass.states,
@@ -1453,12 +727,12 @@ export class LawnMowerCard extends LitElement {
           )}
         `
       : undefined;
-    const activeView =
-      (this._heroView === "camera" && !cameraEntity) ||
-      (this._heroView === "map" && !mapUrl) ||
-      (this._heroView === "point-cloud" && !pointCloudPath)
-        ? "overview"
-        : this._heroView;
+    const availableViews = availableHeroViews({
+      map: Boolean(mapUrl),
+      pointCloud: Boolean(pointCloudPath),
+      camera: Boolean(cameraEntity),
+    });
+    const activeView = resolveHeroView(this._heroView, availableViews);
     const cameraBlockedReason = cameraEntity
       ? cameraBlockReason(cameraEntity)
       : undefined;
@@ -1478,6 +752,7 @@ export class LawnMowerCard extends LitElement {
       heroImage: normalizeHeroImage(this._config.hero_image),
       heroImagePosition: normalizeHeroImagePosition(this._config.hero_image_position),
       activeView,
+      availableViews,
       mapUrl,
       mapFit: normalizeMapFit(this._config.map_fit),
       mapPosition: normalizeMapPosition(this._config.map_position),
@@ -1499,6 +774,12 @@ export class LawnMowerCard extends LitElement {
         : undefined,
       controls,
       hass: this.hass,
+      supportsStart: mowerSupportsFeature(
+        mower,
+        LawnMowerFeature.START_MOWING,
+      ),
+      supportsPause: mowerSupportsFeature(mower, LawnMowerFeature.PAUSE),
+      supportsDock: mowerSupportsFeature(mower, LawnMowerFeature.DOCK),
       canStart:
         !this._mutationInFlight &&
         this._canStart(mower.state) &&
@@ -2134,7 +1415,7 @@ export class LawnMowerCard extends LitElement {
   }
 
   private _buildActionGroups(
-    mowerState: string,
+    mower: HassEntity,
   ): Array<{
     title: string;
     actions: Array<{
@@ -2156,31 +1437,35 @@ export class LawnMowerCard extends LitElement {
     }> = [];
 
     if (this._config.show_default_actions ?? true) {
-      defaultActions.push(
-        {
+      if (mowerSupportsFeature(mower, LawnMowerFeature.START_MOWING)) {
+        defaultActions.push({
           label: this._t("action.start"),
           icon: "mdi:play",
           disabled:
             Boolean(this._mutationInFlight) ||
-            !this._canStart(mowerState) ||
+            !this._canStart(mower.state) ||
             !this._canStartSelectedTarget(),
           handler: () => this._startMowing(),
-        },
-        {
+        });
+      }
+      if (mowerSupportsFeature(mower, LawnMowerFeature.PAUSE)) {
+        defaultActions.push({
           label: this._t("action.pause"),
           icon: "mdi:pause",
           disabled:
-            Boolean(this._mutationInFlight) || !this._canPause(mowerState),
+            Boolean(this._mutationInFlight) || !this._canPause(mower.state),
           handler: () => this._pauseMowing(),
-        },
-        {
+        });
+      }
+      if (mowerSupportsFeature(mower, LawnMowerFeature.DOCK)) {
+        defaultActions.push({
           label: this._t("action.dock"),
           icon: "mdi:home-import-outline",
           disabled:
-            Boolean(this._mutationInFlight) || !this._canDock(mowerState),
+            Boolean(this._mutationInFlight) || !this._canDock(mower.state),
           handler: () => this._dockMower(),
-        },
-      );
+        });
+      }
     }
 
     const helperActions: Array<{
@@ -2200,7 +1485,7 @@ export class LawnMowerCard extends LitElement {
       handler: () => Promise<void> | void;
     }> = [];
     for (const action of this._config.actions || []) {
-      const built = this._buildConfiguredAction(action, mowerState);
+      const built = this._buildConfiguredAction(action, mower);
       if (built) {
         customActions.push(built);
       }
@@ -2215,7 +1500,7 @@ export class LawnMowerCard extends LitElement {
 
   private _buildConfiguredAction(
     action: LawnMowerActionConfig,
-    mowerState: string,
+    mower: HassEntity,
   ):
     | {
         label: string;
@@ -2227,32 +1512,41 @@ export class LawnMowerCard extends LitElement {
     const type = action.type || "more-info";
 
     if (type === "start") {
+      if (!mowerSupportsFeature(mower, LawnMowerFeature.START_MOWING)) {
+        return undefined;
+      }
       return {
         label: action.label || this._t("action.start"),
         icon: action.icon || "mdi:play",
         disabled:
           Boolean(this._mutationInFlight) ||
-          !this._canStart(mowerState) || !this._canStartSelectedTarget(),
+          !this._canStart(mower.state) || !this._canStartSelectedTarget(),
         handler: () => this._startMowing(),
       };
     }
 
     if (type === "pause") {
+      if (!mowerSupportsFeature(mower, LawnMowerFeature.PAUSE)) {
+        return undefined;
+      }
       return {
         label: action.label || this._t("action.pause"),
         icon: action.icon || "mdi:pause",
         disabled:
-          Boolean(this._mutationInFlight) || !this._canPause(mowerState),
+          Boolean(this._mutationInFlight) || !this._canPause(mower.state),
         handler: () => this._pauseMowing(),
       };
     }
 
     if (type === "dock") {
+      if (!mowerSupportsFeature(mower, LawnMowerFeature.DOCK)) {
+        return undefined;
+      }
       return {
         label: action.label || this._t("action.dock"),
         icon: action.icon || "mdi:home-import-outline",
         disabled:
-          Boolean(this._mutationInFlight) || !this._canDock(mowerState),
+          Boolean(this._mutationInFlight) || !this._canDock(mower.state),
         handler: () => this._dockMower(),
       };
     }
@@ -3852,1288 +3146,6 @@ export class LawnMowerCard extends LitElement {
         entity_id: this._config?.entity,
       }),
     );
-  }
-}
-
-@customElement("lawn-mower-card-editor")
-export class LawnMowerCardEditor extends LitElement {
-  @property({ attribute: false }) public hass!: HomeAssistant;
-
-  @state() private _config?: LawnMowerCardConfig;
-  @state() private _serviceDataDrafts: Record<number, string> = {};
-
-  private get _locale(): SupportedLocale {
-    return resolveLocale(
-      this._config?.locale ?? "auto",
-      this.hass?.locale?.language,
-      this.hass?.language,
-      globalThis.navigator?.language,
-    );
-  }
-
-  private get _t() {
-    return createTranslator(this._locale);
-  }
-
-  public static styles = css`
-    :host {
-      display: block;
-    }
-
-    .editor {
-      display: grid;
-      gap: 12px;
-      padding: 16px;
-    }
-
-    label {
-      display: grid;
-      gap: 6px;
-      font-size: 0.95rem;
-    }
-
-    .hint {
-      color: var(--secondary-text-color);
-      font-size: 0.8rem;
-    }
-
-    input {
-      box-sizing: border-box;
-      width: 100%;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 10px 12px;
-      background: var(--card-background-color);
-      color: var(--primary-text-color);
-      font: inherit;
-    }
-
-    select {
-      box-sizing: border-box;
-      width: 100%;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 10px 12px;
-      background: var(--card-background-color);
-      color: var(--primary-text-color);
-      font: inherit;
-    }
-
-    .toggle {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 10px 12px;
-    }
-
-    .toggle input {
-      width: auto;
-    }
-
-    .section {
-      display: grid;
-      gap: 10px;
-      padding: 14px;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-    }
-
-    .section-header {
-      display: flex;
-      align-items: start;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    .section-title {
-      display: grid;
-      gap: 4px;
-    }
-
-    .section-title strong {
-      font-size: 0.95rem;
-    }
-
-    .collection {
-      display: grid;
-      gap: 12px;
-    }
-
-    .row {
-      display: grid;
-      gap: 10px;
-      padding: 12px;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      background: color-mix(in srgb, var(--card-background-color) 92%, white 8%);
-    }
-
-    .row-grid {
-      display: grid;
-      gap: 10px;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .row-grid.single {
-      grid-template-columns: 1fr;
-    }
-
-    .row-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 10px;
-    }
-
-    button {
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 10px 12px;
-      background: var(--card-background-color);
-      color: var(--primary-text-color);
-      font: inherit;
-      cursor: pointer;
-    }
-
-    button.danger {
-      color: #ffd7d7;
-      border-color: color-mix(in srgb, #f87171 45%, var(--divider-color) 55%);
-    }
-
-    textarea {
-      box-sizing: border-box;
-      width: 100%;
-      min-height: 110px;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 10px 12px;
-      background: var(--card-background-color);
-      color: var(--primary-text-color);
-      font: inherit;
-      resize: vertical;
-    }
-
-    .error {
-      color: #ffb4b4;
-    }
-
-    @media (max-width: 640px) {
-      .row-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .section-header {
-        display: grid;
-      }
-    }
-  `;
-
-  public setConfig(config: LawnMowerCardConfig): void {
-    this._config = config;
-  }
-
-  protected render() {
-    const config = this._config || LawnMowerCard.getStubConfig();
-
-    return html`
-      <div class="editor" lang=${this._locale}>
-        <div class="hint">
-          ${this._t("editor.intro")}
-        </div>
-        ${this._localeField(config.locale || "auto")}
-        ${this._field(
-          this._t("editor.mowerEntity"),
-          config.entity,
-          "entity",
-          "lawn_mower.my_mower",
-          this._t("editor.mowerEntityHint"),
-          ["lawn_mower"],
-        )}
-        ${this._field(
-          this._t("editor.title"),
-          config.name,
-          "name",
-          this._t("editor.titlePlaceholder"),
-          this._t("editor.titleHint"),
-        )}
-        ${this._layoutField(config.layout || "default")}
-        ${config.layout === "hero" ? this._heroAppearanceSection(config) : nothing}
-        ${this._field(
-          this._t("editor.mapCamera"),
-          config.map_entity,
-          "map_entity",
-          "camera.my_mower_live_path_map",
-          this._t("editor.mapCameraHint"),
-          ["camera"],
-        )}
-        ${this._field(
-          this._t("editor.videoCamera"),
-          config.camera_entity,
-          "camera_entity",
-          "camera.my_mower_live_video",
-          this._t("editor.videoCameraHint"),
-          ["camera"],
-        )}
-        ${this._toggle(
-          this._t("editor.showMap"),
-          config.show_map ?? Boolean(config.map_entity),
-          "show_map",
-        )}
-        ${this._mapFitField(normalizeMapFit(config.map_fit))}
-        ${this._mapPositionField(normalizeMapPosition(config.map_position))}
-        ${this._toggle(
-          this._t("editor.showPointCloud"),
-          config.show_point_cloud ??
-            Boolean(
-              pointCloudPathFromEntity(
-                config.map_entity
-                  ? this.hass?.states[config.map_entity]
-                  : undefined,
-              ),
-            ),
-          "show_point_cloud",
-        )}
-        ${this._field(
-          this._t("editor.statusEntity"),
-          config.status_entity,
-          "status_entity",
-          "sensor.my_mower_state_name",
-          this._t("editor.statusEntityHint"),
-          ["sensor", "binary_sensor", "calendar", "camera", "lawn_mower"],
-        )}
-        ${this._field(
-          this._t("editor.batteryEntity"),
-          config.battery_entity,
-          "battery_entity",
-          "sensor.my_mower_battery",
-          this._t("editor.batteryEntityHint"),
-          ["sensor", "number", "input_number", "binary_sensor"],
-        )}
-        ${this._field(
-          this._t("editor.progressEntity"),
-          config.progress_entity,
-          "progress_entity",
-          "sensor.my_mower_progress",
-          this._t("editor.progressEntityHint"),
-          ["sensor", "binary_sensor", "calendar", "camera", "lawn_mower"],
-        )}
-        ${this._field(
-          this._t("editor.coverageEntity"),
-          config.coverage_entity,
-          "coverage_entity",
-          "sensor.my_mower_current_cleaned_area",
-          this._t("editor.coverageEntityHint"),
-          ["sensor", "number", "input_number"],
-        )}
-        ${this._field(
-          this._t("editor.totalCoverageEntity"),
-          config.coverage_total_entity,
-          "coverage_total_entity",
-          "sensor.my_mower_runtime_total_area",
-          this._t("editor.totalCoverageEntityHint"),
-          ["sensor", "number", "input_number"],
-        )}
-        ${this._toggle(
-          this._t("editor.showDefaultActions"),
-          config.show_default_actions ?? true,
-          "show_default_actions",
-        )}
-        ${this._toggle(
-          this._t("editor.showHelperActions"),
-          config.show_helper_actions ?? true,
-          "show_helper_actions",
-        )}
-        ${this._toggle(
-          this._t("editor.showAdvanced"),
-          config.show_advanced_details ?? false,
-          "show_advanced_details",
-        )}
-        ${this._controlEntitiesSection(config.control_entities || [])}
-        ${this._summaryEntitiesSection(config.summary_entities || [])}
-        ${this._tilesSection(config.tiles || [])}
-        ${this._actionsSection(config.actions || [])}
-      </div>
-    `;
-  }
-
-  private _localeField(value: LocalePreference) {
-    return html`
-      <label>
-        <span>${this._t("editor.language")}</span>
-        <select data-key="locale" @change=${this._valueChanged}>
-          ${LOCALE_OPTIONS.map(
-            (option) => html`<option value=${option.value} ?selected=${option.value === value}>${
-              option.value === "auto" ? this._t("common.automatic") : option.label
-            }</option>`,
-          )}
-        </select>
-        <span class="hint">${this._t("editor.languageHint")}</span>
-      </label>
-    `;
-  }
-
-  private _layoutField(value: "default" | "compact" | "wide" | "hero") {
-    return html`
-      <label>
-        <span>${this._t("editor.layout")}</span>
-        <select .value=${value} @change=${this._layoutChanged}>
-          <option value="default">${this._t("editor.layoutDefault")}</option>
-          <option value="compact">${this._t("editor.layoutCompact")}</option>
-          <option value="wide">${this._t("editor.layoutWide")}</option>
-          <option value="hero">${this._t("editor.layoutHero")}</option>
-        </select>
-        <span class="hint">${this._t("editor.layoutHint")}</span>
-      </label>
-    `;
-  }
-
-  private _heroAppearanceSection(config: LawnMowerCardConfig) {
-    return html`
-      <div class="section">
-        <div class="section-title">
-          <strong>${this._t("editor.heroAppearance")}</strong>
-          <span class="hint">${this._t("editor.heroAppearanceHint")}</span>
-        </div>
-        ${this._field(
-          this._t("editor.backgroundImage"),
-          config.hero_image,
-          "hero_image",
-          "/local/mower/my-mower.jpg",
-          this._t("editor.backgroundImageHint"),
-        )}
-        ${this._heroImagePositionField(
-          normalizeHeroImagePosition(config.hero_image_position),
-        )}
-      </div>
-    `;
-  }
-
-  private _mapFitField(value: MapFit) {
-    return html`
-      <label>
-        <span>${this._t("editor.mapFit")}</span>
-        <select data-key="map_fit" .value=${value} @change=${this._valueChanged}>
-          <option value="contain">${this._t("editor.mapFitContain")}</option>
-          <option value="cover">${this._t("editor.mapFitCover")}</option>
-        </select>
-        <span class="hint">
-          ${this._t("editor.mapFitHint")}
-        </span>
-      </label>
-    `;
-  }
-
-  private _mapPositionField(value: MapPosition) {
-    return html`
-      <label>
-        <span>${this._t("editor.mapFocus")}</span>
-        <select data-key="map_position" .value=${value} @change=${this._valueChanged}>
-          <option value="center">${this._t("common.center")}</option>
-          <option value="top">${this._t("common.top")}</option>
-          <option value="bottom">${this._t("common.bottom")}</option>
-          <option value="left">${this._t("common.left")}</option>
-          <option value="right">${this._t("common.right")}</option>
-          <option value="top-left">${this._t("common.topLeft")}</option>
-          <option value="top-right">${this._t("common.topRight")}</option>
-          <option value="bottom-left">${this._t("common.bottomLeft")}</option>
-          <option value="bottom-right">${this._t("common.bottomRight")}</option>
-        </select>
-        <span class="hint">${this._t("editor.mapFocusHint")}</span>
-      </label>
-    `;
-  }
-
-  private _heroImagePositionField(value: HeroImagePosition) {
-    return html`
-      <label>
-        <span>${this._t("editor.imageFocus")}</span>
-        <select
-          data-key="hero_image_position"
-          .value=${value}
-          @change=${this._valueChanged}
-        >
-          <option value="center">${this._t("common.center")}</option>
-          <option value="left">${this._t("common.left")}</option>
-          <option value="right">${this._t("common.right")}</option>
-          <option value="top">${this._t("common.top")}</option>
-          <option value="bottom">${this._t("common.bottom")}</option>
-        </select>
-        <span class="hint">${this._t("editor.imageFocusHint")}</span>
-      </label>
-    `;
-  }
-
-  private _field(
-    label: string,
-    value: string | undefined,
-    key: keyof LawnMowerCardConfig,
-    placeholder: string,
-    hint: string,
-    domains?: string[],
-  ) {
-    const datalistId = domains?.length ? `lawn-mower-card-editor-${String(key)}-entities` : undefined;
-    return html`
-      <label>
-        <span>${label}</span>
-        <input
-          .value=${value || ""}
-          data-key=${String(key)}
-          placeholder=${placeholder}
-          list=${datalistId || nothing}
-          @input=${this._valueChanged}
-        />
-        <span class="hint">${hint}</span>
-        ${datalistId ? this._entityDatalist(datalistId, domains) : nothing}
-      </label>
-    `;
-  }
-
-  private _toggle(
-    label: string,
-    value: boolean,
-    key:
-      | "show_map"
-      | "show_point_cloud"
-      | "show_default_actions"
-      | "show_helper_actions"
-      | "show_advanced_details",
-  ) {
-    return html`
-      <label class="toggle">
-        <span>${label}</span>
-        <input
-          type="checkbox"
-          .checked=${value}
-          data-key=${key}
-          @change=${this._toggleChanged}
-        />
-      </label>
-    `;
-  }
-
-  private _controlEntitiesSection(controlEntities: string[]) {
-    return html`
-      <div class="section">
-        <div class="section-header">
-          <div class="section-title">
-            <strong>${this._t("editor.controls")}</strong>
-            <span class="hint">${this._t("editor.controlsHint")}</span>
-          </div>
-          <button type="button" @click=${this._addControlEntity}>${this._t("editor.addControl")}</button>
-        </div>
-        ${controlEntities.length
-          ? html`
-              <div class="collection">
-                ${controlEntities.map(
-                  (entityId, index) => html`
-                    <div class="row">
-                      <div class="row-grid single">
-                        <label>
-                          <span>${this._t("editor.controlEntity")}</span>
-                          <input
-                            .value=${entityId || ""}
-                            data-index=${String(index)}
-                            placeholder="select.my_mower_selected_map_preference_mode"
-                            list="lawn-mower-card-editor-control-entities"
-                            @input=${this._controlEntityChanged}
-                          />
-                        </label>
-                      </div>
-                      <div class="row-actions">
-                        <button
-                          type="button"
-                          class="danger"
-                          data-index=${String(index)}
-                          @click=${this._removeControlEntity}
-                        >
-                          ${this._t("editor.removeControl")}
-                        </button>
-                      </div>
-                    </div>
-                  `,
-                )}
-              </div>
-            `
-          : html`
-              <div class="hint">
-                ${this._t("editor.noControls")}
-              </div>
-            `}
-        ${this._entityDatalist("lawn-mower-card-editor-control-entities", [
-          "select",
-          "number",
-          "switch",
-          "time",
-        ])}
-      </div>
-    `;
-  }
-
-  private _summaryEntitiesSection(summaryEntities: string[]) {
-    return html`
-      <div class="section">
-        <div class="section-header">
-          <div class="section-title">
-            <strong>${this._t("editor.summaries")}</strong>
-            <span class="hint">${this._t("editor.summariesHint")}</span>
-          </div>
-          <button type="button" @click=${this._addSummaryEntity}>${this._t("editor.addSummary")}</button>
-        </div>
-        ${summaryEntities.length
-          ? html`
-              <div class="collection">
-                ${summaryEntities.map(
-                  (entityId, index) => html`
-                    <div class="row">
-                      <div class="row-grid single">
-                        <label>
-                          <span>${this._t("common.entity")}</span>
-                          <input
-                            .value=${entityId || ""}
-                            data-index=${String(index)}
-                            placeholder="sensor.my_mower_weather_protection_status"
-                            list="lawn-mower-card-editor-summary-entities"
-                            @input=${this._summaryEntityChanged}
-                          />
-                        </label>
-                      </div>
-                      <div class="row-actions">
-                        <button
-                          type="button"
-                          class="danger"
-                          data-index=${String(index)}
-                          @click=${this._removeSummaryEntity}
-                        >
-                          ${this._t("editor.removeSummary")}
-                        </button>
-                      </div>
-                    </div>
-                  `,
-                )}
-              </div>
-            `
-          : html`
-              <div class="hint">
-                ${this._t("editor.noSummaries")}
-              </div>
-            `}
-        ${this._entityDatalist("lawn-mower-card-editor-summary-entities", [
-          "sensor",
-          "binary_sensor",
-          "calendar",
-          "camera",
-          "lawn_mower",
-        ])}
-      </div>
-    `;
-  }
-
-  private _tilesSection(tiles: LawnMowerTileConfig[]) {
-    return html`
-      <div class="section">
-        <div class="section-header">
-          <div class="section-title">
-            <strong>${this._t("editor.tiles")}</strong>
-            <span class="hint">${this._t("editor.tilesHint")}</span>
-          </div>
-          <button type="button" @click=${this._addTile}>${this._t("editor.addTile")}</button>
-        </div>
-        ${tiles.length
-          ? html`
-              <div class="collection">
-                ${tiles.map(
-                  (tile, index) => html`
-                    <div class="row">
-                      <div class="row-grid">
-                        <label>
-                          <span>${this._t("common.entity")}</span>
-                          <input
-                            .value=${tile.entity || ""}
-                            data-index=${String(index)}
-                            data-key="entity"
-                            placeholder="sensor.my_mower_error"
-                            list="lawn-mower-card-editor-tile-entities"
-                            @input=${this._tileChanged}
-                          />
-                        </label>
-                        <label>
-                          <span>${this._t("common.label")}</span>
-                          <input
-                            .value=${tile.label || ""}
-                            data-index=${String(index)}
-                            data-key="label"
-                            placeholder=${this._t("common.error")}
-                            @input=${this._tileChanged}
-                          />
-                        </label>
-                      </div>
-                      <div class="row-grid">
-                        <label>
-                          <span>${this._t("common.icon")}</span>
-                          <input
-                            .value=${tile.icon || ""}
-                            data-index=${String(index)}
-                            data-key="icon"
-                            placeholder="mdi:alert-circle-outline"
-                            @input=${this._tileChanged}
-                          />
-                          <span class="hint">${this._t("editor.iconHint")}</span>
-                        </label>
-                      </div>
-                      <div class="row-actions">
-                        <button
-                          type="button"
-                          class="danger"
-                          data-index=${String(index)}
-                          @click=${this._removeTile}
-                        >
-                          ${this._t("editor.removeTile")}
-                        </button>
-                      </div>
-                    </div>
-                  `,
-                )}
-              </div>
-            `
-          : html`<div class="hint">${this._t("editor.noTiles")}</div>`}
-        ${this._entityDatalist("lawn-mower-card-editor-tile-entities")}
-      </div>
-    `;
-  }
-
-  private _actionsSection(actions: LawnMowerActionConfig[]) {
-    return html`
-      <div class="section">
-        <div class="section-header">
-          <div class="section-title">
-            <strong>${this._t("editor.actions")}</strong>
-            <span class="hint">${this._t("editor.actionsHint")}</span>
-          </div>
-          <button type="button" @click=${this._addAction}>${this._t("editor.addAction")}</button>
-        </div>
-        ${actions.length
-          ? html`
-              <div class="collection">
-                ${actions.map((action, index) => {
-                  const type = action.type || "more-info";
-                  const serviceDataError = this._serviceDataDraftError(index, action);
-                  return html`
-                    <div class="row">
-                      <div class="row-grid">
-                        <label>
-                          <span>${this._t("common.type")}</span>
-                          <select
-                            .value=${type}
-                            data-index=${String(index)}
-                            @change=${this._actionTypeChanged}
-                          >
-                            <option value="more-info">${this._t("action.moreInfo")}</option>
-                            <option value="service">${this._t("common.service")}</option>
-                            <option value="start">${this._t("action.start")}</option>
-                            <option value="pause">${this._t("action.pause")}</option>
-                            <option value="dock">${this._t("action.dock")}</option>
-                          </select>
-                        </label>
-                        <label>
-                          <span>${this._t("common.label")}</span>
-                          <input
-                            .value=${action.label || ""}
-                            data-index=${String(index)}
-                            data-key="label"
-                            placeholder=${this._t("action.moreInfo")}
-                            @input=${this._actionChanged}
-                          />
-                        </label>
-                      </div>
-                      <div class="row-grid">
-                        <label>
-                          <span>${this._t("common.icon")}</span>
-                          <input
-                            .value=${action.icon || ""}
-                            data-index=${String(index)}
-                            data-key="icon"
-                            placeholder="mdi:information-outline"
-                            @input=${this._actionChanged}
-                          />
-                        </label>
-                        ${type === "more-info"
-                          ? html`
-                              <label>
-                                <span>${this._t("editor.targetEntity")}</span>
-                                <input
-                                  .value=${action.entity || ""}
-                                  data-index=${String(index)}
-                                  data-key="entity"
-                                  placeholder="camera.my_mower_map"
-                                  list="lawn-mower-card-editor-action-targets"
-                                  @input=${this._actionChanged}
-                                />
-                                <span class="hint">${this._t("editor.targetEntityHint")}</span>
-                              </label>
-                            `
-                          : type === "service"
-                            ? html`
-                                <label>
-                                  <span>${this._t("common.service")}</span>
-                                  <input
-                                    .value=${action.service || ""}
-                                    data-index=${String(index)}
-                                    data-key="service"
-                                    placeholder="button.press"
-                                    @input=${this._actionChanged}
-                                  />
-                                </label>
-                              `
-                            : html`<div></div>`}
-                      </div>
-                      ${type === "service"
-                        ? html`
-                            <div class="row-grid single">
-                              <label>
-                                <span>${this._t("editor.serviceData")}</span>
-                                <textarea
-                                  data-index=${String(index)}
-                                  placeholder='{"entity_id":"button.my_probe"}'
-                                  @input=${this._actionServiceDataChanged}
-                                >${this._serviceDataValue(index, action)}</textarea>
-                                <span class=${`hint ${serviceDataError ? "error" : ""}`}>
-                                  ${serviceDataError
-                                    ? this._t("editor.serviceDataInvalid")
-                                    : this._t("editor.serviceDataHint")}
-                                </span>
-                              </label>
-                            </div>
-                          `
-                        : nothing}
-                      <div class="row-actions">
-                        <button
-                          type="button"
-                          class="danger"
-                          data-index=${String(index)}
-                          @click=${this._removeAction}
-                        >
-                          ${this._t("editor.removeAction")}
-                        </button>
-                      </div>
-                    </div>
-                  `;
-                })}
-              </div>
-            `
-          : html`<div class="hint">${this._t("editor.noActions")}</div>`}
-        ${this._entityDatalist("lawn-mower-card-editor-action-targets")}
-      </div>
-    `;
-  }
-
-  private _entityDatalist(id: string, domains?: string[]) {
-    const entityIds = this._entityIds(domains);
-    if (!entityIds.length) {
-      return nothing;
-    }
-    return html`
-      <datalist id=${id}>
-        ${entityIds.map((entityId) => html`<option value=${entityId}></option>`)}
-      </datalist>
-    `;
-  }
-
-  private _entityIds(domains?: string[]): string[] {
-    if (!this.hass?.states) {
-      return [];
-    }
-
-    const allowed = domains?.length ? new Set(domains) : undefined;
-    return Object.keys(this.hass.states)
-      .filter((entityId) => {
-        if (!allowed) {
-          return true;
-        }
-        const [domain] = entityId.split(".");
-        return allowed.has(domain);
-      })
-      .sort((left, right) => left.localeCompare(right));
-  }
-
-  private _valueChanged(event: Event) {
-    const target = event.currentTarget as HTMLInputElement | HTMLSelectElement;
-    const key = target.dataset.key as keyof LawnMowerCardConfig | undefined;
-    if (!key) {
-      return;
-    }
-
-    const previous = this._config || LawnMowerCard.getStubConfig();
-    const next: LawnMowerCardConfig = {
-      ...previous,
-    };
-
-    const value = target.value.trim();
-    if (value) {
-      next[key] = value as never;
-    } else {
-      delete next[key];
-    }
-
-    if (!next.entity) {
-      next.entity = LawnMowerCard.getStubConfig().entity;
-    }
-
-    if (key === "entity" && value && value !== previous.entity) {
-      this._applyEntityAutofill(next, previous);
-    }
-
-    this._emitConfigChanged(next);
-  }
-
-  private _applyEntityAutofill(
-    next: LawnMowerCardConfig,
-    previous: LawnMowerCardConfig,
-  ) {
-    const previousDetected = this._autoDetectedCompanions(
-      previous.entity,
-      true,
-    );
-    const nextDetected = this._autoDetectedCompanions(next.entity);
-
-    this._replaceAutoEntityField("map_entity", next, previousDetected, nextDetected);
-    this._replaceAutoEntityField("camera_entity", next, previousDetected, nextDetected);
-    this._replaceAutoEntityField("status_entity", next, previousDetected, nextDetected);
-    this._replaceAutoEntityField("battery_entity", next, previousDetected, nextDetected);
-    this._replaceAutoEntityField("progress_entity", next, previousDetected, nextDetected);
-    this._replaceAutoEntityField("coverage_entity", next, previousDetected, nextDetected);
-    this._replaceAutoEntityField("coverage_total_entity", next, previousDetected, nextDetected);
-
-    const previousAutoShowMap = Boolean(previousDetected.map_entity);
-    if (next.show_map === undefined || next.show_map === previousAutoShowMap) {
-      if (nextDetected.map_entity) {
-        next.show_map = true;
-      } else {
-        delete next.show_map;
-      }
-    }
-  }
-
-  private _replaceAutoEntityField(
-    key:
-      | "map_entity"
-      | "camera_entity"
-      | "status_entity"
-      | "battery_entity"
-      | "progress_entity"
-      | "coverage_entity"
-      | "coverage_total_entity",
-    next: LawnMowerCardConfig,
-    previousDetected: Partial<LawnMowerCardConfig>,
-    nextDetected: Partial<LawnMowerCardConfig>,
-  ) {
-    const current = next[key];
-    const previousValue = previousDetected[key] as string | undefined;
-    const nextValue = nextDetected[key] as string | undefined;
-
-    if (!current || (previousValue !== undefined && current === previousValue)) {
-      if (nextValue) {
-        next[key] = nextValue as never;
-      } else {
-        delete next[key];
-      }
-    }
-  }
-
-  private _autoDetectedCompanions(
-    entityId?: string,
-    recognizePriorCamera = false,
-  ): Partial<LawnMowerCardConfig> {
-    if (!entityId || !this.hass?.states) {
-      return {};
-    }
-
-    const objectId = entityId.split(".", 2)[1];
-    if (!objectId) {
-      return {};
-    }
-
-    const companion = (
-      domain: string,
-      ...roles: readonly string[]
-    ): string | undefined =>
-      resolvedMowerCompanionEntity(
-        this.hass.states,
-        entityId,
-        this.hass.entities,
-        domain,
-        ...roles,
-      );
-
-    const first = (...values: Array<string | undefined>): string | undefined =>
-      values.find((value) => Boolean(value));
-
-    const mapEntity = first(
-      companion("camera", "live_path_map"),
-      companion("camera", "map"),
-      companion("camera", "all_maps"),
-      companion("camera", "map_data"),
-    );
-    const cameraEntity = resolvedMowerLiveVideoEntity(
-      this.hass.states,
-      entityId,
-      this.hass.entities,
-      { includeIneligible: recognizePriorCamera },
-    );
-
-    return {
-      map_entity: mapEntity,
-      camera_entity: cameraEntity,
-      status_entity: first(
-        companion("sensor", "state_name"),
-        companion("sensor", "activity"),
-        companion("sensor", "error"),
-      ),
-      battery_entity: companion("sensor", "battery"),
-      progress_entity: first(
-        companion("sensor", "runtime_mission_progress"),
-        companion("sensor", "mowing_progress"),
-      ),
-      coverage_entity: first(
-        companion("sensor", "runtime_current_area"),
-        companion("sensor", "current_cleaned_area"),
-      ),
-      coverage_total_entity: companion("sensor", "runtime_total_area"),
-    };
-  }
-
-  private _toggleChanged(event: Event) {
-    const target = event.currentTarget as HTMLInputElement;
-    const key = target.dataset.key as
-      | "show_map"
-      | "show_point_cloud"
-      | "show_default_actions"
-      | "show_helper_actions"
-      | "show_advanced_details"
-      | undefined;
-    if (!key) {
-      return;
-    }
-
-    const next: LawnMowerCardConfig = {
-      ...(this._config || LawnMowerCard.getStubConfig()),
-      [key]: target.checked,
-    };
-
-    if (!next.entity) {
-      next.entity = LawnMowerCard.getStubConfig().entity;
-    }
-
-    this._emitConfigChanged(next);
-  }
-
-  private _layoutChanged(event: Event) {
-    const target = event.currentTarget as HTMLSelectElement;
-    const next: LawnMowerCardConfig = {
-      ...(this._config || LawnMowerCard.getStubConfig()),
-      layout: target.value as "default" | "compact" | "wide" | "hero",
-    };
-
-    if (!next.entity) {
-      next.entity = LawnMowerCard.getStubConfig().entity;
-    }
-
-    this._emitConfigChanged(next);
-  }
-
-  private _addSummaryEntity() {
-    const next = this._nextConfig();
-    next.summary_entities = [...(next.summary_entities || []), ""];
-    this._emitConfigChanged(next);
-  }
-
-  private _addControlEntity() {
-    const next = this._nextConfig();
-    next.control_entities = [...(next.control_entities || []), ""];
-    this._emitConfigChanged(next);
-  }
-
-  private _removeControlEntity(event: Event) {
-    const index = this._indexFromEvent(event);
-    if (index === undefined) {
-      return;
-    }
-    const next = this._nextConfig();
-    next.control_entities = (next.control_entities || []).filter(
-      (_, itemIndex) => itemIndex !== index,
-    );
-    if (!next.control_entities.length) {
-      delete next.control_entities;
-    }
-    this._emitConfigChanged(next);
-  }
-
-  private _controlEntityChanged(event: Event) {
-    const target = event.currentTarget as HTMLInputElement;
-    const index = this._indexFromEvent(event);
-    if (index === undefined) {
-      return;
-    }
-    const next = this._nextConfig();
-    const controlEntities = [...(next.control_entities || [])];
-    controlEntities[index] = target.value.trim();
-    const cleaned = controlEntities.filter(Boolean);
-    if (cleaned.length) {
-      next.control_entities = cleaned;
-    } else {
-      delete next.control_entities;
-    }
-    this._emitConfigChanged(next);
-  }
-
-  private _removeSummaryEntity(event: Event) {
-    const index = this._indexFromEvent(event);
-    if (index === undefined) {
-      return;
-    }
-    const next = this._nextConfig();
-    next.summary_entities = (next.summary_entities || []).filter(
-      (_, itemIndex) => itemIndex !== index,
-    );
-    if (!next.summary_entities.length) {
-      delete next.summary_entities;
-    }
-    this._emitConfigChanged(next);
-  }
-
-  private _summaryEntityChanged(event: Event) {
-    const target = event.currentTarget as HTMLInputElement;
-    const index = this._indexFromEvent(event);
-    if (index === undefined) {
-      return;
-    }
-    const next = this._nextConfig();
-    const summaryEntities = [...(next.summary_entities || [])];
-    summaryEntities[index] = target.value.trim();
-    const cleaned = summaryEntities.filter(Boolean);
-    if (cleaned.length) {
-      next.summary_entities = cleaned;
-    } else {
-      delete next.summary_entities;
-    }
-    this._emitConfigChanged(next);
-  }
-
-  private _addTile() {
-    const next = this._nextConfig();
-    next.tiles = [...(next.tiles || []), { entity: "" }];
-    this._emitConfigChanged(next);
-  }
-
-  private _removeTile(event: Event) {
-    const index = this._indexFromEvent(event);
-    if (index === undefined) {
-      return;
-    }
-    const next = this._nextConfig();
-    next.tiles = (next.tiles || []).filter((_, itemIndex) => itemIndex !== index);
-    if (!next.tiles.length) {
-      delete next.tiles;
-    }
-    this._emitConfigChanged(next);
-  }
-
-  private _tileChanged(event: Event) {
-    const target = event.currentTarget as HTMLInputElement;
-    const index = this._indexFromEvent(event);
-    const key = target.dataset.key as keyof LawnMowerTileConfig | undefined;
-    if (index === undefined || !key) {
-      return;
-    }
-    const next = this._nextConfig();
-    const tiles = [...(next.tiles || [])];
-    const current = { ...(tiles[index] || { entity: "" }) };
-    const value = target.value.trim();
-    if (value) {
-      current[key] = value;
-    } else {
-      delete current[key];
-    }
-    tiles[index] = current;
-    next.tiles = tiles;
-    this._emitConfigChanged(next);
-  }
-
-  private _addAction() {
-    const next = this._nextConfig();
-    next.actions = [...(next.actions || []), { type: "more-info" }];
-    this._emitConfigChanged(next);
-  }
-
-  private _removeAction(event: Event) {
-    const index = this._indexFromEvent(event);
-    if (index === undefined) {
-      return;
-    }
-    const next = this._nextConfig();
-    next.actions = (next.actions || []).filter((_, itemIndex) => itemIndex !== index);
-    if (!next.actions.length) {
-      delete next.actions;
-    }
-    delete this._serviceDataDrafts[index];
-    this._serviceDataDrafts = this._reindexDrafts(this._serviceDataDrafts, index);
-    this._emitConfigChanged(next);
-  }
-
-  private _actionChanged(event: Event) {
-    const target = event.currentTarget as HTMLInputElement;
-    const index = this._indexFromEvent(event);
-    const key = target.dataset.key as keyof LawnMowerActionConfig | undefined;
-    if (index === undefined || !key) {
-      return;
-    }
-    const next = this._nextConfig();
-    const actions = [...(next.actions || [])];
-    const current = { ...(actions[index] || { type: "more-info" }) };
-    const value = target.value.trim();
-    if (value) {
-      current[key] = key === "service_data" ? undefined : (value as never);
-    } else {
-      delete current[key];
-    }
-    actions[index] = current;
-    next.actions = actions;
-    this._emitConfigChanged(next);
-  }
-
-  private _actionTypeChanged(event: Event) {
-    const target = event.currentTarget as HTMLSelectElement;
-    const index = this._indexFromEvent(event);
-    if (index === undefined) {
-      return;
-    }
-    const next = this._nextConfig();
-    const actions = [...(next.actions || [])];
-    const current = { ...(actions[index] || {}) };
-    current.type = target.value as LawnMowerActionConfig["type"];
-    if (current.type !== "service") {
-      delete current.service;
-      delete current.service_data;
-      delete this._serviceDataDrafts[index];
-      this._serviceDataDrafts = { ...this._serviceDataDrafts };
-    }
-    if (current.type !== "more-info") {
-      delete current.entity;
-    }
-    actions[index] = current;
-    next.actions = actions;
-    this._emitConfigChanged(next);
-  }
-
-  private _actionServiceDataChanged(event: Event) {
-    const target = event.currentTarget as HTMLTextAreaElement;
-    const index = this._indexFromEvent(event);
-    if (index === undefined) {
-      return;
-    }
-    const raw = target.value.trim();
-    this._serviceDataDrafts = {
-      ...this._serviceDataDrafts,
-      [index]: target.value,
-    };
-
-    const next = this._nextConfig();
-    const actions = [...(next.actions || [])];
-    const current = { ...(actions[index] || { type: "service" }) };
-
-    if (!raw) {
-      delete current.service_data;
-      delete this._serviceDataDrafts[index];
-      this._serviceDataDrafts = { ...this._serviceDataDrafts };
-      actions[index] = current;
-      next.actions = actions;
-      this._emitConfigChanged(next);
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        this.requestUpdate();
-        return;
-      }
-      current.service_data = parsed as Record<string, unknown>;
-      actions[index] = current;
-      next.actions = actions;
-      this._emitConfigChanged(next);
-    } catch {
-      this.requestUpdate();
-    }
-  }
-
-  private _serviceDataValue(index: number, action: LawnMowerActionConfig): string {
-    if (index in this._serviceDataDrafts) {
-      return this._serviceDataDrafts[index];
-    }
-    if (!action.service_data) {
-      return "";
-    }
-    return JSON.stringify(action.service_data, null, 2);
-  }
-
-  private _serviceDataDraftError(index: number, action: LawnMowerActionConfig): boolean {
-    const raw = this._serviceDataValue(index, action).trim();
-    if (!raw) {
-      return false;
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      return !parsed || typeof parsed !== "object" || Array.isArray(parsed);
-    } catch {
-      return true;
-    }
-  }
-
-  private _nextConfig(): LawnMowerCardConfig {
-    const next: LawnMowerCardConfig = {
-      ...(this._config || LawnMowerCard.getStubConfig()),
-    };
-    if (!next.entity) {
-      next.entity = LawnMowerCard.getStubConfig().entity;
-    }
-    return next;
-  }
-
-  private _emitConfigChanged(next: LawnMowerCardConfig) {
-    this._config = next;
-    this.dispatchEvent(
-      new CustomEvent<ConfigChangedDetail>("config-changed", {
-        detail: { config: next },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-  }
-
-  private _indexFromEvent(event: Event): number | undefined {
-    const target = event.currentTarget as HTMLElement | undefined;
-    const value = target?.dataset.index;
-    if (value === undefined) {
-      return undefined;
-    }
-    const index = Number(value);
-    return Number.isInteger(index) ? index : undefined;
-  }
-
-  private _reindexDrafts(
-    drafts: Record<number, string>,
-    removedIndex: number,
-  ): Record<number, string> {
-    const next: Record<number, string> = {};
-    for (const [key, value] of Object.entries(drafts)) {
-      const index = Number(key);
-      if (Number.isNaN(index) || index === removedIndex) {
-        continue;
-      }
-      next[index > removedIndex ? index - 1 : index] = value;
-    }
-    return next;
   }
 }
 

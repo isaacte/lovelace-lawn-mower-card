@@ -10,27 +10,34 @@ mower—not a renamed vacuum card.
 
 ![Lawn Mower Card Hero layout preview](assets/lawn-mower-card-hero.png)
 
-The Hero layout puts state, battery, mission coverage, 2D/3D maps, live camera,
-and the primary controls on one responsive surface. Traditional compact,
-default, and wide layouts remain available for denser dashboards.
+The Hero layout starts with mower state, battery, and supported controls, then
+adds mission coverage, 2D/3D maps, and live camera only when those companion
+entities are available. Traditional compact, default, and wide layouts remain
+available for denser dashboards.
 
 The card works with a standard `lawn_mower` entity and becomes richer when an
-integration exposes companion map, camera, schedule, and telemetry entities:
+integration exposes companion map, camera, schedule, control, and telemetry
+entities. Optional features disappear cleanly when they are not available, so
+a mower-only setup does not show empty tabs or controls it cannot use.
 
-- mower state and activity
-- optional map camera, with live-path overlays preferred when the integration exposes them
-- start, pause, and dock controls
-- context-aware selectors for the map, mowing action, and current target
-- a dedicated schedule panel with direct per-plan switches when the integration
-  exposes standard schedule-control entities
-- live map badges for current activity, map identity, and withheld invalid positions
-- direct access to live video, calendars, and mower maps when those entities exist
-- an image-led Hero layout with in-card Overview, Map, 3D, and Camera views
-- card and visual-editor localization in English, German, French, Italian,
-  Polish, Russian, and Ukrainian, including native plural rules
-- optional advanced planning and live-session telemetry
-- configurable status tiles
-- room to grow into richer map and zone workflows later
+## What the card includes
+
+| Area | Included today |
+| --- | --- |
+| Mower basics | State and activity, battery, and capability-aware Start, Pause, and Dock controls |
+| Dashboard layouts | Image-led Hero plus compact, default, and wide layouts for different dashboard densities |
+| Maps and media | Optional 2D map, live-path overlays, on-demand 3D point clouds, and Home Assistant camera playback |
+| Direct controls | Auto-discovered or explicitly configured selects, numbers, switches, time inputs, target selectors, and schedule switches |
+| Mowing context | Mission progress, area coverage, summary chips, map identity, rain delay, errors, and configurable status tiles |
+| Advanced workflows | Multi-zone selection when supported, Planned Run confirmation, device settings, and Live Session telemetry |
+| Customization | Visual editor, custom Hero image and focus, map fit and crop focus, extra tiles, helper actions, and custom services |
+| Localization | Card and editor translations in English, German, French, Italian, Polish, Russian, and Ukrainian, including native plural rules |
+
+Start with only the mower entity. The card automatically adds compatible
+companions it can identify, while every important companion can also be chosen
+explicitly in the visual editor or YAML. Integration-specific protocol and
+device writes remain owned by the Home Assistant integration; the card uses
+standard Home Assistant entities and services wherever possible.
 
 The first fully exercised pairing is
 [Dreame Lawn Mower](https://github.com/EvotecIT/homeassistant-dreamelawnmower),
@@ -120,12 +127,34 @@ without requiring raw configuration changes.
 ### Integration compatibility
 
 Any integration that exposes a standard Home Assistant `lawn_mower` entity can
-use the card's state display and start, pause, and dock controls. Richer
-automatic setup works best when companion cameras, calendars, sensors, selects,
-switches, and buttons belong to the same Home Assistant device and use stable
-translation keys such as `live_video`, `map`, or `schedule`. Entity names may be
-changed by the user; device ownership and translation keys are therefore
-preferred over name matching.
+use the card. Start, pause, and dock buttons follow the entity's standard
+`supported_features` bitmask, so read-only or partially controllable mowers do
+not show actions that Home Assistant will reject.
+
+Optional UI follows optional entities:
+
+| Integration surface | Card behavior |
+| --- | --- |
+| `lawn_mower` only | State, available standard actions, and Hero Overview; the redundant one-item view bar is hidden |
+| map camera | Adds Map |
+| map camera with `point_cloud_api_path` | Adds 3D |
+| live-video camera | Adds Camera |
+| related sensors, calendars, selects, switches, and buttons | Adds the matching summaries, schedules, controls, and helpers |
+
+Richer automatic setup works best when companion entities belong to the same
+Home Assistant device and use stable translation keys such as `live_video`,
+`map`, or `schedule`. Entity names may be changed by the user; device ownership
+and translation keys are therefore preferred over name matching.
+
+A mower without map or camera entities needs no special workaround:
+
+```yaml
+type: custom:lawn-mower-card
+entity: lawn_mower.my_mower
+layout: hero
+```
+
+The Hero view bar appears only after a second usable view is available.
 
 Integrations may expose optional tri-state feature metadata on the mower entity:
 
