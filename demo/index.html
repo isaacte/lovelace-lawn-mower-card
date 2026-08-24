@@ -570,6 +570,10 @@
                       <button data-state="docked">Docked</button>
                     </div>
                     <button id="toggle-rain" class="toggle-button">Rain delay off</button>
+                    <div class="segment" id="profile-segment" aria-label="Mower capabilities">
+                      <button data-profile="rich" class="active">Rich integration</button>
+                      <button data-profile="mower-only">Mower only</button>
+                    </div>
                   </div>
                   <label>
                     <span style="margin-right: 8px;">Layout</span>
@@ -588,7 +592,7 @@
                 <div class="panel-header">
                   <div>
                     <h2>Card comparison</h2>
-                    <p>All four presets share the same mocked mower state and helper entities.</p>
+                    <p>All four presets use the selected mower capability profile.</p>
                   </div>
                   <div class="compact-note" id="layout-summary">Showing all presets</div>
                 </div>
@@ -780,6 +784,7 @@
           state: "mowing",
           attributes: {
             friendly_name: "Backyard mower",
+            supported_features: 7,
             battery_level: 87,
             activity: "cutting",
             task_status_name: "zone_cleaning",
@@ -1278,6 +1283,33 @@
       const metricBattery = document.getElementById("metric-battery");
       const metricWeather = document.getElementById("metric-weather");
       const activityFeed = document.getElementById("activity-feed");
+      let activeProfile = "rich";
+      const mowerOnlyHass = {
+        ...hass,
+        states: {
+          "lawn_mower.backyard_mower": {
+            ...stateStore["lawn_mower.backyard_mower"],
+            attributes: {
+              friendly_name: "Backyard mower",
+              battery_level: 87,
+              supported_features: 5,
+            },
+          },
+          "sensor.backyard_mower_battery": stateStore["sensor.backyard_mower_battery"],
+        },
+        entities: {
+          "lawn_mower.backyard_mower": {
+            platform: "demo_mower",
+            device_id: "mower-only-device",
+          },
+          "sensor.backyard_mower_battery": {
+            platform: "demo_mower",
+            device_id: "mower-only-device",
+            translation_key: "battery",
+          },
+        },
+        services: {},
+      };
       const baseConfig = {
         type: "custom:lawn-mower-card",
         entity: "lawn_mower.backyard_mower",
@@ -1295,20 +1327,37 @@
       };
 
       function applyConfig(overrides = {}) {
-        cards.hero.hass = hass;
-        cards.hero.setConfig({ ...baseConfig, ...overrides, layout: "hero" });
+        const activeHass = activeProfile === "mower-only" ? mowerOnlyHass : hass;
+        const profileConfig =
+          activeProfile === "mower-only"
+            ? {
+                map_entity: undefined,
+                show_map: false,
+                show_point_cloud: false,
+                status_entity: undefined,
+                progress_entity: undefined,
+              }
+            : {};
+
+        cards.hero.hass = activeHass;
+        cards.hero.setConfig({
+          ...baseConfig,
+          ...profileConfig,
+          ...overrides,
+          layout: "hero",
+        });
         cards.hero.requestUpdate();
 
-        cards.wide.hass = hass;
-        cards.wide.setConfig({ ...baseConfig, ...overrides, layout: "wide" });
+        cards.wide.hass = activeHass;
+        cards.wide.setConfig({ ...baseConfig, ...profileConfig, ...overrides, layout: "wide" });
         cards.wide.requestUpdate();
 
-        cards.default.hass = hass;
-        cards.default.setConfig({ ...baseConfig, ...overrides, layout: "default" });
+        cards.default.hass = activeHass;
+        cards.default.setConfig({ ...baseConfig, ...profileConfig, ...overrides, layout: "default" });
         cards.default.requestUpdate();
 
-        cards.compact.hass = hass;
-        cards.compact.setConfig({ ...baseConfig, ...overrides, layout: "compact" });
+        cards.compact.hass = activeHass;
+        cards.compact.setConfig({ ...baseConfig, ...profileConfig, ...overrides, layout: "compact" });
         cards.compact.requestUpdate();
       }
 
@@ -1409,6 +1458,24 @@
           ],
         };
 
+        if (activeProfile === "mower-only") {
+          setActivityFeed([
+            {
+              title: "Standard mower contract",
+              body: "Only mower state and standard Home Assistant actions are exposed.",
+            },
+            {
+              title: "Optional views removed",
+              body: "Map, 3D, and Camera controls are hidden because no companion entities exist.",
+            },
+            {
+              title: "Capability-aware controls",
+              body: "Start and Dock remain available; unsupported Pause is omitted.",
+            },
+          ]);
+          return;
+        }
+
         setActivityFeed(feedByState[nextState] || feedByState.mowing);
       }
 
@@ -1422,6 +1489,7 @@
             candidate.classList.toggle("active", candidate === button);
           }
           stateStore["lawn_mower.backyard_mower"].state = nextState;
+          mowerOnlyHass.states["lawn_mower.backyard_mower"].state = nextState;
           stateStore["sensor.backyard_mower_state_name"].state =
             nextState === "mowing"
               ? "Mowing front yard"
@@ -1458,6 +1526,17 @@
           }
           applyConfig();
           updatePreviewMeta(nextState);
+        });
+      }
+
+      for (const button of document.querySelectorAll("[data-profile]")) {
+        button.addEventListener("click", () => {
+          activeProfile = button.getAttribute("data-profile");
+          for (const candidate of document.querySelectorAll("[data-profile]")) {
+            candidate.classList.toggle("active", candidate === button);
+          }
+          applyConfig();
+          updatePreviewMeta(stateStore["lawn_mower.backyard_mower"].state);
         });
       }
 

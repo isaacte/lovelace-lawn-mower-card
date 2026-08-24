@@ -13,8 +13,13 @@ import {
   type HeroImagePosition,
 } from "./hero-image";
 import type { SupportedLocale, Translator } from "./localization";
+import {
+  isHeroViewAvailable,
+  showHeroViewTabs,
+  type HeroView,
+} from "./hero-views";
 
-export type HeroView = "overview" | "map" | "point-cloud" | "camera";
+export type { HeroView } from "./hero-views";
 
 export type HeroLayoutModel = {
   t: Translator;
@@ -31,6 +36,7 @@ export type HeroLayoutModel = {
   heroImage?: string;
   heroImagePosition?: HeroImagePosition;
   activeView: HeroView;
+  availableViews: readonly HeroView[];
   mapUrl?: string;
   mapFit: MapFit;
   mapPosition: MapPosition;
@@ -46,6 +52,9 @@ export type HeroLayoutModel = {
   cameraPreviewUrl?: string;
   controls?: TemplateResult;
   hass: object;
+  supportsStart: boolean;
+  supportsPause: boolean;
+  supportsDock: boolean;
   canStart: boolean;
   canPause: boolean;
   canDock: boolean;
@@ -217,7 +226,6 @@ function renderTab(
   view: HeroView,
   label: string,
   icon: string,
-  disabled = false,
 ): TemplateResult {
   const selected = model.activeView === view;
   return html`
@@ -226,7 +234,6 @@ function renderTab(
       role="tab"
       aria-selected=${selected ? "true" : "false"}
       aria-label=${label}
-      ?disabled=${disabled}
       @click=${() => model.onView(view)}
     >
       <ha-icon .icon=${icon}></ha-icon>
@@ -257,6 +264,28 @@ function renderAction(
 
 export function renderHeroLayout(model: HeroLayoutModel): TemplateResult {
   const overview = model.activeView === "overview";
+  const tabs: ReadonlyArray<{
+    view: HeroView;
+    label: string;
+    icon: string;
+  }> = [
+    {
+      view: "overview",
+      label: model.t("hero.overview"),
+      icon: "mdi:view-dashboard-outline",
+    },
+    { view: "map", label: model.t("hero.map"), icon: "mdi:map-outline" },
+    {
+      view: "point-cloud",
+      label: model.t("action.pointCloud"),
+      icon: "mdi:rotate-3d-variant",
+    },
+    {
+      view: "camera",
+      label: model.t("hero.camera"),
+      icon: "mdi:video-wireless-outline",
+    },
+  ];
   return html`
     <ha-card class="hero-card" lang=${model.locale}>
       <div class="hero-shell">
@@ -296,24 +325,21 @@ export function renderHeroLayout(model: HeroLayoutModel): TemplateResult {
             : nothing}
         </section>
 
-        <nav class="hero-tabs" role="tablist" aria-label=${model.t("hero.viewLabel")}>
-          ${renderTab(model, "overview", model.t("hero.overview"), "mdi:view-dashboard-outline")}
-          ${renderTab(model, "map", model.t("hero.map"), "mdi:map-outline", !model.mapUrl)}
-          ${renderTab(
-            model,
-            "point-cloud",
-            model.t("action.pointCloud"),
-            "mdi:rotate-3d-variant",
-            !model.pointCloudPath,
-          )}
-          ${renderTab(
-            model,
-            "camera",
-            model.t("hero.camera"),
-            "mdi:video-wireless-outline",
-            !model.cameraEntity,
-          )}
-        </nav>
+        ${showHeroViewTabs(model.availableViews)
+          ? html`
+              <nav
+                class="hero-tabs"
+                role="tablist"
+                aria-label=${model.t("hero.viewLabel")}
+              >
+                ${tabs
+                  .filter(({ view }) => model.availableViews.includes(view))
+                  .map(({ view, label, icon }) =>
+                    renderTab(model, view, label, icon),
+                  )}
+              </nav>
+            `
+          : nothing}
 
         ${model.controls
           ? html`
@@ -345,41 +371,52 @@ export function renderHeroLayout(model: HeroLayoutModel): TemplateResult {
         <div class="hero-actions" aria-label=${model.t("hero.controlsLabel")}>
           ${model.showDefaultActions
             ? html`
-                ${renderAction(model.t("action.start"), "mdi:play", model.onStart, {
-                  disabled: !model.canStart,
-                })}
-                ${renderAction(model.t("action.pause"), "mdi:pause", model.onPause, {
-                  disabled: !model.canPause,
-                })}
-                ${renderAction(model.t("action.dock"), "mdi:home-import-outline", model.onDock, {
-                  disabled: !model.canDock,
-                })}
+                ${model.supportsStart
+                  ? renderAction(model.t("action.start"), "mdi:play", model.onStart, {
+                      disabled: !model.canStart,
+                    })
+                  : nothing}
+                ${model.supportsPause
+                  ? renderAction(model.t("action.pause"), "mdi:pause", model.onPause, {
+                      disabled: !model.canPause,
+                    })
+                  : nothing}
+                ${model.supportsDock
+                  ? renderAction(
+                      model.t("action.dock"),
+                      "mdi:home-import-outline",
+                      model.onDock,
+                      { disabled: !model.canDock },
+                    )
+                  : nothing}
               `
             : nothing}
           ${model.showHelperActions
             ? html`
-                ${renderAction(
-                  model.t("action.camera"),
-                  "mdi:video-wireless-outline",
-                  () => model.onView("camera"),
-                  {
-                    disabled: !model.cameraEntity,
-                    active: model.activeView === "camera",
-                  },
-                )}
-                ${renderAction(model.t("action.map"), "mdi:map-outline", () => model.onView("map"), {
-                  disabled: !model.mapUrl,
-                  active: model.activeView === "map",
-                })}
-                ${renderAction(
-                  model.t("action.pointCloud"),
-                  "mdi:rotate-3d-variant",
-                  () => model.onView("point-cloud"),
-                  {
-                    disabled: !model.pointCloudPath,
-                    active: model.activeView === "point-cloud",
-                  },
-                )}
+                ${isHeroViewAvailable("camera", model.availableViews)
+                  ? renderAction(
+                      model.t("action.camera"),
+                      "mdi:video-wireless-outline",
+                      () => model.onView("camera"),
+                      { active: model.activeView === "camera" },
+                    )
+                  : nothing}
+                ${isHeroViewAvailable("map", model.availableViews)
+                  ? renderAction(
+                      model.t("action.map"),
+                      "mdi:map-outline",
+                      () => model.onView("map"),
+                      { active: model.activeView === "map" },
+                    )
+                  : nothing}
+                ${isHeroViewAvailable("point-cloud", model.availableViews)
+                  ? renderAction(
+                      model.t("action.pointCloud"),
+                      "mdi:rotate-3d-variant",
+                      () => model.onView("point-cloud"),
+                      { active: model.activeView === "point-cloud" },
+                    )
+                  : nothing}
                 ${model.onMaintenancePoint
                   ? renderAction(
                       model.t("action.maintenance"),
