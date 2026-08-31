@@ -74,6 +74,10 @@ test("Spanish translations and plurals", () => {
   assert.equal(t("cardPicker.name"), "Tarjeta de cortacésped");
   assert.equal(t("schedule.count", { count: 1 }), "1 horario");
   assert.equal(t("schedule.count", { count: 2 }), "2 horarios");
+  assert.equal(t("pointCloud.points", { count: 1 }), "Puntos: 1" );
+  assert.equal(t("pointCloud.points", { count: 2 }), "Puntos: 2" );
+  assert.equal(t("pointCloud.visiblePoints", { total: 1, visible: 1}), "Puntos visibles: 1 de 1" );
+  assert.equal(t("pointCloud.visiblePoints", { total: 3, visible: 2}), "Puntos visibles: 2 de 3" );
   assert.match(t("card.zoneSelection", { count: 3 }), /3 zonas/);
 });
 
